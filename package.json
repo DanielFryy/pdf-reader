@@ -1,0 +1,27 @@
+{
+  "name": "my-turborepo",
+  "private": true,
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "check-format": "prettier -c ./**/*.{js,ts,tsx,json,css,md}",
+    "format": "prettier --write \"**/*.{js,ts,tsx,json,css,md}\"",
+    "check-types": "turbo run check-types",
+    "test": "turbo run test",
+    "test:watch": "turbo run test:watch",
+    "update-dependencies": "ncu -l silent -u -ws && pnpm run clean && pnpm i",
+    "clean": "rm -rf node_modules **/**/node_modules **/**/.next **/**/.turbo",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "prettier": "^3.7.3",
+    "turbo": "^2.6.1",
+    "typescript": "^5.9.3"
+  },
+  "packageManager": "pnpm@10.24.0",
+  "engines": {
+    "node": ">=18"
+  }
+}

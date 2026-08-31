@@ -1,0 +1,1 @@
+pnpm check-types && pnpm check-format && pnpm lint && pnpm test && pnpm build
