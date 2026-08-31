@@ -79,9 +79,9 @@
 }
 
 .readerControls {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto minmax(160px, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
   min-height: 56px;
   padding: 10px 14px;
@@ -115,6 +115,14 @@
   display: flex;
   flex: 0 0 auto;
   align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.pageControls {
+  display: grid;
+  grid-template-columns: 36px minmax(92px, auto) 36px 36px minmax(42px, auto) 36px auto;
+  align-items: center;
   gap: 8px;
 }
 
@@ -127,17 +135,51 @@
   height: 36px;
 }
 
+.pageCount,
+.zoomState {
+  color: #2b332d;
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .readingSurface {
+  display: grid;
+  align-content: start;
+  justify-items: center;
+  gap: 10px;
+  overflow: auto;
   width: 100%;
   height: calc(100svh - 57px);
-  border: 0;
+  padding: 32px;
   background: #e8ede7;
+}
+
+.pdfPage {
+  display: block;
+  max-width: 100%;
+  background: #101411;
+  box-shadow: 0 8px 24px rgba(32, 39, 34, 0.12);
+}
+
+.status {
+  color: #5f6a62;
+  font-size: 0.82rem;
 }
 
 @media (max-width: 620px) {
   .readerControls {
+    grid-template-columns: 1fr;
     align-items: stretch;
-    flex-direction: column;
+  }
+
+  .pageControls {
+    grid-template-columns: 36px minmax(92px, 1fr) 36px 36px minmax(42px, auto) 36px;
+  }
+
+  .pageControls .controlButton {
+    grid-column: 1 / -1;
   }
 
   .actions {
@@ -153,6 +195,7 @@
   }
 
   .readingSurface {
-    height: calc(100svh - 105px);
+    height: calc(100svh - 153px);
+    padding: 18px;
   }
 }

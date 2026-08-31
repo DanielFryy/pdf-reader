@@ -4,25 +4,53 @@ import userEvent from "@testing-library/user-event";
 import Page from "./page";
 import { render } from "setupTests";
 
+const pdfjsMock = vi.hoisted(() => ({
+  destroyDocument: vi.fn(),
+  getDocument: vi.fn(),
+  getPage: vi.fn(),
+  getViewport: vi.fn(({ scale }: { scale: number }) => ({
+    height: 792 * scale,
+    width: 612 * scale
+  })),
+  renderPage: vi.fn(() => ({ cancel: vi.fn(), promise: Promise.resolve() })),
+  GlobalWorkerOptions: {
+    workerSrc: ""
+  }
+}));
+
+vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
+  GlobalWorkerOptions: pdfjsMock.GlobalWorkerOptions,
+  getDocument: pdfjsMock.getDocument
+}));
+
 const pdfFile = new File(["%PDF-1.7 local bytes"], "quiet-reading.pdf", {
   type: "application/pdf"
 });
 
 describe("Page", () => {
-  const createObjectURL = vi.fn(() => "blob:local-pdf");
-  const revokeObjectURL = vi.fn();
+  const canvasContext = {} as CanvasRenderingContext2D;
 
   beforeEach(() => {
-    vi.stubGlobal("URL", {
-      ...URL,
-      createObjectURL,
-      revokeObjectURL
+    Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+      configurable: true,
+      value: vi.fn(() => canvasContext)
+    });
+    pdfjsMock.destroyDocument.mockResolvedValue(undefined);
+    pdfjsMock.getPage.mockResolvedValue({
+      getViewport: pdfjsMock.getViewport,
+      render: pdfjsMock.renderPage
+    });
+    pdfjsMock.getDocument.mockReturnValue({
+      promise: Promise.resolve({
+        destroy: pdfjsMock.destroyDocument,
+        getPage: pdfjsMock.getPage,
+        numPages: 3
+      })
     });
     localStorage.clear();
   });
 
   afterEach(() => {
-    vi.unstubAllGlobals();
     vi.clearAllMocks();
   });
 
@@ -43,12 +71,44 @@ describe("Page", () => {
 
     await user.upload(screen.getByLabelText("Open local PDF"), pdfFile);
 
-    expect(screen.getByTitle("Reading Surface")).toBeInTheDocument();
+    expect(await screen.findByText("Page 1 of 3")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Reading Surface page 1" })).toBeInTheDocument();
+    expect(screen.queryByTitle("Reading Surface")).not.toBeInTheDocument();
+    expect(document.querySelector("iframe")).not.toBeInTheDocument();
+    expect(pdfjsMock.renderPage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        background: "#101411",
+        canvasContext,
+        pageColors: {
+          background: "#101411",
+          foreground: "#f5f2e9"
+        }
+      })
+    );
     expect(screen.getByText("quiet-reading.pdf")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Replace local PDF" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Fit to width" })).toBeInTheDocument();
   });
 
-  it("accepts a dropped Local PDF", () => {
+  it("replaces the current Local PDF", async () => {
+    const user = userEvent.setup();
+    const nextPdfFile = new File(["%PDF-1.7 replacement bytes"], "second-reading.pdf", {
+      type: "application/pdf"
+    });
+
+    render(<Page />);
+
+    await user.upload(screen.getByLabelText("Open local PDF"), pdfFile);
+    expect(await screen.findByText("quiet-reading.pdf")).toBeInTheDocument();
+
+    await user.upload(screen.getByLabelText("Open local PDF"), nextPdfFile);
+
+    expect(await screen.findByText("second-reading.pdf")).toBeInTheDocument();
+    expect(screen.queryByText("quiet-reading.pdf")).not.toBeInTheDocument();
+    expect(pdfjsMock.destroyDocument).toHaveBeenCalled();
+  });
+
+  it("accepts a dropped Local PDF", async () => {
     render(<Page />);
 
     fireEvent.drop(screen.getByText("Drop a PDF here"), {
@@ -57,7 +117,7 @@ describe("Page", () => {
       }
     });
 
-    expect(screen.getByTitle("Reading Surface")).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Reading Surface" })).toBeInTheDocument();
   });
 
   it("resets the current Local PDF", async () => {
@@ -68,8 +128,7 @@ describe("Page", () => {
     await user.upload(screen.getByLabelText("Open local PDF"), pdfFile);
     await user.click(screen.getByRole("button", { name: "Close local PDF" }));
 
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:local-pdf");
-    expect(screen.queryByTitle("Reading Surface")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Reading Surface" })).not.toBeInTheDocument();
     expect(screen.getByText("Drop a PDF here")).toBeInTheDocument();
   });
 
@@ -79,6 +138,7 @@ describe("Page", () => {
     render(<Page />);
 
     await user.upload(screen.getByLabelText("Open local PDF"), pdfFile);
+    await screen.findByText("Page 1 of 3");
 
     const [memoryKey] = Object.keys(localStorage);
     const storedMemory = localStorage.getItem(memoryKey ?? "");
@@ -86,7 +146,7 @@ describe("Page", () => {
     expect(storedMemory).toContain("quiet-reading.pdf");
     expect(storedMemory).toContain(String(pdfFile.size));
     expect(storedMemory).toContain('"lastPage":1');
-    expect(storedMemory).toContain('"zoom":"native"');
+    expect(storedMemory).toContain('"zoom":"fit-width"');
     expect(storedMemory).not.toContain('"type"');
     expect(storedMemory).not.toContain('"lastOpenedAt"');
     expect(storedMemory).not.toContain("%PDF-1.7 local bytes");
