@@ -1,10 +1,10 @@
 "use client";
 
 import { Button } from "@repo/ui/components/button";
-import { ChevronLeft, ChevronRight, FileUp, Minus, Plus, RotateCcw, X } from "lucide-react";
+import { ChevronDown, FileUp, Maximize, Minus, Plus, RotateCcw, X } from "lucide-react";
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist/types/src/pdf";
-import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import styles from "./page.module.css";
 
@@ -33,8 +33,7 @@ const maximumZoom = 2.5;
 const zoomStep = 0.15;
 const fileMemoryPrefix = "pdf-reader:file-memory";
 const comfortPageColors = {
-  background: "#101411",
-  foreground: "#f5f2e9"
+  background: "#d9dab6"
 };
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/legacy/build/pdf.worker.mjs", import.meta.url).toString();
@@ -48,6 +47,22 @@ const getLocalPdfFingerprint = (file: File): LocalPdfFingerprint => ({
 const getFileMemoryKey = (fingerprint: LocalPdfFingerprint) =>
   `${fileMemoryPrefix}:${fingerprint.name}:${fingerprint.size}:${fingerprint.lastModified}`;
 
+const clampPage = (page: number, pageCount: number) => Math.min(Math.max(page, 1), pageCount);
+
+const clampZoom = (zoom: number) => Math.min(Math.max(zoom, minimumZoom), maximumZoom);
+
+const normalizeReaderZoom = (zoom: unknown): ReaderZoom => {
+  if (zoom === "fit-width") {
+    return zoom;
+  }
+
+  if (typeof zoom === "number" && Number.isFinite(zoom)) {
+    return clampZoom(zoom);
+  }
+
+  return "fit-width";
+};
+
 const readFileMemory = (fingerprint: LocalPdfFingerprint): FileMemory | null => {
   const storedMemory = localStorage.getItem(getFileMemoryKey(fingerprint));
 
@@ -56,7 +71,13 @@ const readFileMemory = (fingerprint: LocalPdfFingerprint): FileMemory | null => 
   }
 
   try {
-    return JSON.parse(storedMemory) as FileMemory;
+    const memory = JSON.parse(storedMemory) as Partial<FileMemory>;
+
+    return {
+      fingerprint,
+      lastPage: typeof memory.lastPage === "number" && Number.isFinite(memory.lastPage) ? memory.lastPage : 1,
+      zoom: normalizeReaderZoom(memory.zoom)
+    };
   } catch {
     return null;
   }
@@ -75,95 +96,139 @@ const readLocalPdfBytes = (file: File) =>
     reader.readAsArrayBuffer(file);
   });
 
-const clampPage = (page: number, pageCount: number) => Math.min(Math.max(page, 1), pageCount);
+const getNumericZoom = (zoom: ReaderZoom) => (typeof zoom === "number" && Number.isFinite(zoom) ? zoom : defaultZoom);
 
-const clampZoom = (zoom: number) => Math.min(Math.max(zoom, minimumZoom), maximumZoom);
+const getNonEmptyCanvasSize = (size: number) => (Number.isFinite(size) ? Math.max(1, Math.floor(size)) : 1);
 
-const getNumericZoom = (zoom: ReaderZoom) => (zoom === "fit-width" ? defaultZoom : zoom);
-
-const cancelRenderTask = (renderTask: RenderTask | null) => {
-  try {
-    renderTask?.cancel();
-  } catch {
+const keepCanvasDrawable = (canvas: HTMLCanvasElement | null | undefined) => {
+  if (!canvas) {
     return;
   }
+
+  if (canvas.width === 0) {
+    canvas.width = 1;
+  }
+
+  if (canvas.height === 0) {
+    canvas.height = 1;
+  }
+};
+
+const cancelRenderTasks = (renderTasks: RenderTask[], canvases: Iterable<HTMLCanvasElement>) => {
+  Array.from(canvases).forEach(keepCanvasDrawable);
+
+  renderTasks.forEach(renderTask => {
+    try {
+      renderTask.cancel();
+    } catch {
+      return;
+    }
+  });
 };
 
 export default function ReadingWorkspace() {
   const inputRef = useRef<HTMLInputElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const readingSurfaceRef = useRef<HTMLDivElement>(null);
-  const renderTaskRef = useRef<RenderTask | null>(null);
+  const canvasRefs = useRef(new Map<number, HTMLCanvasElement>());
+  const renderTasksRef = useRef<RenderTask[]>([]);
+  const restoredPageRef = useRef<number | null>(null);
   const [localPdf, setLocalPdf] = useState<LocalPdf | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageCount, setPageCount] = useState(0);
   const [zoom, setZoom] = useState<ReaderZoom>("fit-width");
   const [status, setStatus] = useState("No Local PDF selected.");
+  const pageNumbers = useMemo(() => Array.from({ length: pageCount }, (_, index) => index + 1), [pageCount]);
+
+  const cancelActiveRenders = useCallback(() => {
+    cancelRenderTasks(renderTasksRef.current, canvasRefs.current.values());
+    renderTasksRef.current = [];
+  }, []);
+
+  const setPageCanvasRef = useCallback(
+    (pageNumber: number) => (canvas: HTMLCanvasElement | null) => {
+      if (canvas) {
+        canvasRefs.current.set(pageNumber, canvas);
+      } else {
+        canvasRefs.current.delete(pageNumber);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     return () => {
-      cancelRenderTask(renderTaskRef.current);
+      cancelActiveRenders();
       void localPdf?.document.destroy();
     };
-  }, [localPdf]);
+  }, [cancelActiveRenders, localPdf]);
 
   useEffect(() => {
     if (!localPdf || pageCount === 0) {
       return;
     }
 
-    const canvas = canvasRef.current;
     const readingSurface = readingSurfaceRef.current;
-    const canvasContext = canvas?.getContext("2d");
 
-    if (!canvas || !canvasContext || !readingSurface) {
+    if (!readingSurface) {
       return;
     }
 
     let isCancelled = false;
 
-    const renderCurrentPage = async () => {
-      setStatus(`Rendering page ${currentPage} of ${pageCount}.`);
-      cancelRenderTask(renderTaskRef.current);
+    const renderPages = async () => {
+      setStatus(`Rendering ${pageCount} pages.`);
+      cancelActiveRenders();
 
-      const page = await localPdf.document.getPage(currentPage);
-      const baseViewport = page.getViewport({ scale: 1 });
-      const availableWidth = Math.max(320, readingSurface.clientWidth - 64);
-      const renderZoom = zoom === "fit-width" ? clampZoom(availableWidth / baseViewport.width) : zoom;
-      const viewport = page.getViewport({ scale: renderZoom });
-      const outputScale = window.devicePixelRatio || 1;
+      for (const pageNumber of pageNumbers) {
+        if (isCancelled) {
+          return;
+        }
 
-      canvas.width = Math.floor(viewport.width * outputScale);
-      canvas.height = Math.floor(viewport.height * outputScale);
-      canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
+        const canvas = canvasRefs.current.get(pageNumber);
+        const canvasContext = canvas?.getContext("2d");
 
-      const renderTask = page.render({
-        background: comfortPageColors.background,
-        canvasContext,
-        pageColors: comfortPageColors,
-        transform: outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined,
-        viewport
-      });
+        if (!canvas || !canvasContext) {
+          continue;
+        }
 
-      renderTaskRef.current = renderTask;
-      await renderTask.promise;
+        const page = await localPdf.document.getPage(pageNumber);
+        const baseViewport = page.getViewport({ scale: 1 });
+        const availableWidth = Math.max(320, readingSurface.clientWidth - 64);
+        const renderZoom = zoom === "fit-width" ? clampZoom(availableWidth / baseViewport.width) : zoom;
+        const viewport = page.getViewport({ scale: renderZoom });
+        const outputScale = window.devicePixelRatio || 1;
 
-      if (isCancelled) {
-        return;
+        canvas.width = getNonEmptyCanvasSize(viewport.width * outputScale);
+        canvas.height = getNonEmptyCanvasSize(viewport.height * outputScale);
+        canvas.style.width = `${viewport.width}px`;
+        canvas.style.height = `${viewport.height}px`;
+
+        const renderTask = page.render({
+          background: comfortPageColors.background,
+          canvasContext,
+          transform: outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined,
+          viewport
+        });
+
+        renderTasksRef.current = [...renderTasksRef.current, renderTask];
+        await renderTask.promise;
+        renderTasksRef.current = renderTasksRef.current.filter(task => task !== renderTask);
+
+        if (isCancelled) {
+          return;
+        }
+
+        if (restoredPageRef.current === pageNumber) {
+          canvas.scrollIntoView?.({ block: "start" });
+          restoredPageRef.current = null;
+        }
       }
 
-      renderTaskRef.current = null;
-      rememberFileMemory({
-        fingerprint: localPdf.fingerprint,
-        lastPage: currentPage,
-        zoom
-      });
-      setStatus(`Page ${currentPage} of ${pageCount} ready.`);
+      setStatus(`${pageCount} pages ready.`);
     };
 
-    void renderCurrentPage().catch(error => {
+    void renderPages().catch(error => {
       if (!isCancelled && error instanceof Error && error.name !== "RenderingCancelledException") {
         setStatus("This PDF could not be rendered.");
       }
@@ -171,9 +236,52 @@ export default function ReadingWorkspace() {
 
     return () => {
       isCancelled = true;
-      cancelRenderTask(renderTaskRef.current);
+      cancelActiveRenders();
     };
-  }, [currentPage, localPdf, pageCount, zoom]);
+  }, [cancelActiveRenders, localPdf, pageCount, pageNumbers, zoom]);
+
+  useEffect(() => {
+    if (!localPdf) {
+      return;
+    }
+
+    rememberFileMemory({
+      fingerprint: localPdf.fingerprint,
+      lastPage: currentPage,
+      zoom
+    });
+  }, [currentPage, localPdf, zoom]);
+
+  useEffect(() => {
+    const readingSurface = readingSurfaceRef.current;
+
+    if (!readingSurface || typeof IntersectionObserver === "undefined") {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      entries => {
+        const visiblePage = entries
+          .filter(entry => entry.isIntersecting)
+          .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0]?.target;
+        const pageNumber = Number((visiblePage as HTMLElement | undefined)?.dataset.pageNumber);
+
+        if (Number.isFinite(pageNumber)) {
+          setCurrentPage(pageNumber);
+        }
+      },
+      {
+        root: readingSurface,
+        threshold: [0.35, 0.55, 0.75]
+      }
+    );
+
+    canvasRefs.current.forEach(canvas => observer.observe(canvas));
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [localPdf, pageCount]);
 
   const openFilePicker = () => {
     inputRef.current?.click();
@@ -200,7 +308,8 @@ export default function ReadingWorkspace() {
     });
     setPageCount(document.numPages);
     setCurrentPage(restoredPage);
-    setZoom(memory?.zoom ?? "fit-width");
+    setZoom(normalizeReaderZoom(memory?.zoom));
+    restoredPageRef.current = restoredPage;
   };
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -234,21 +343,14 @@ export default function ReadingWorkspace() {
   };
 
   const closeLocalPdf = () => {
-    cancelRenderTask(renderTaskRef.current);
-    renderTaskRef.current = null;
+    cancelActiveRenders();
+    canvasRefs.current.clear();
+    restoredPageRef.current = null;
     setLocalPdf(null);
     setPageCount(0);
     setCurrentPage(1);
     setZoom("fit-width");
     setStatus("No Local PDF selected.");
-  };
-
-  const goToPreviousPage = () => {
-    setCurrentPage(page => Math.max(1, page - 1));
-  };
-
-  const goToNextPage = () => {
-    setCurrentPage(page => Math.min(pageCount, page + 1));
   };
 
   const zoomOut = () => {
@@ -277,65 +379,35 @@ export default function ReadingWorkspace() {
       {localPdf ? (
         <section className={styles.readerMode} aria-label="Reader Mode">
           <div className={styles.readerControls}>
+            <div className={styles.actions}>
+              <Button className={styles.openPrimaryButton} type="button" variant="ghost" onClick={openFilePicker}>
+                <RotateCcw aria-hidden />
+                Replace local PDF
+              </Button>
+              <Button
+                className={styles.openMenuButton}
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Open menu"
+              >
+                <ChevronDown aria-hidden />
+              </Button>
+            </div>
             <div className={styles.fileState}>
               <span className={styles.fileName}>{localPdf.fingerprint.name}</span>
               <span className={styles.fileMeta}>{Math.max(1, Math.round(localPdf.fingerprint.size / 1024))} KB</span>
             </div>
-            <div className={styles.pageControls} role="group" aria-label="Reader Controls">
+            <div className={styles.topActions}>
               <Button
                 className={styles.iconButton}
                 type="button"
                 variant="ghost"
                 size="icon"
-                aria-label="Previous page"
-                disabled={currentPage === 1}
-                onClick={goToPreviousPage}
+                aria-label="Fullscreen"
+                onClick={() => readingSurfaceRef.current?.requestFullscreen?.()}
               >
-                <ChevronLeft aria-hidden />
-              </Button>
-              <span className={styles.pageCount}>
-                Page {currentPage} of {pageCount}
-              </span>
-              <Button
-                className={styles.iconButton}
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label="Next page"
-                disabled={currentPage === pageCount}
-                onClick={goToNextPage}
-              >
-                <ChevronRight aria-hidden />
-              </Button>
-              <Button
-                className={styles.iconButton}
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label="Zoom out"
-                onClick={zoomOut}
-              >
-                <Minus aria-hidden />
-              </Button>
-              <span className={styles.zoomState}>{zoom === "fit-width" ? "Fit" : `${Math.round(zoom * 100)}%`}</span>
-              <Button
-                className={styles.iconButton}
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label="Zoom in"
-                onClick={zoomIn}
-              >
-                <Plus aria-hidden />
-              </Button>
-              <Button className={styles.controlButton} type="button" variant="ghost" onClick={fitToWidth}>
-                Fit to width
-              </Button>
-            </div>
-            <div className={styles.actions}>
-              <Button className={styles.controlButton} type="button" variant="ghost" onClick={openFilePicker}>
-                <RotateCcw aria-hidden />
-                Replace local PDF
+                <Maximize aria-hidden />
               </Button>
               <Button
                 className={styles.iconButton}
@@ -350,16 +422,61 @@ export default function ReadingWorkspace() {
             </div>
           </div>
 
-          <div ref={readingSurfaceRef} className={styles.readingSurface} role="region" aria-label="Reading Surface">
-            <canvas
-              ref={canvasRef}
-              className={styles.pdfPage}
-              role="img"
-              aria-label={`Reading Surface page ${currentPage}`}
-            />
-            <p className={styles.status} aria-live="polite">
-              {status}
-            </p>
+          <div className={styles.readerBody}>
+            <aside className={styles.sideRail} aria-label="Reader navigation">
+              <div className={styles.pageControls} role="group" aria-label="Reader Controls">
+                <span className={styles.pageCount}>
+                  <span className={styles.screenReaderOnly}>
+                    Page {currentPage} of {pageCount}
+                  </span>
+                  <strong>{currentPage}</strong>
+                  <span>{pageCount}</span>
+                </span>
+                <Button
+                  className={styles.iconButton}
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Zoom out"
+                  onClick={zoomOut}
+                >
+                  <Minus aria-hidden />
+                </Button>
+                <span className={styles.zoomState}>{zoom === "fit-width" ? "Fit" : `${Math.round(zoom * 100)}%`}</span>
+                <Button
+                  className={styles.iconButton}
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Zoom in"
+                  onClick={zoomIn}
+                >
+                  <Plus aria-hidden />
+                </Button>
+                <Button className={styles.controlButton} type="button" variant="ghost" onClick={fitToWidth}>
+                  Fit to width
+                </Button>
+              </div>
+            </aside>
+
+            <div ref={readingSurfaceRef} className={styles.readingSurface} role="region" aria-label="Reading Surface">
+              <div className={styles.pdfPages}>
+                {pageNumbers.map(pageNumber => (
+                  <div key={pageNumber} className={styles.pageSheet}>
+                    <canvas
+                      ref={setPageCanvasRef(pageNumber)}
+                      className={styles.pdfPage}
+                      data-page-number={pageNumber}
+                      role="img"
+                      aria-label={`Reading Surface page ${pageNumber}`}
+                    />
+                  </div>
+                ))}
+              </div>
+              <p className={styles.status} aria-live="polite">
+                {status}
+              </p>
+            </div>
           </div>
         </section>
       ) : (

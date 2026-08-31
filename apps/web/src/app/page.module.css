@@ -1,12 +1,23 @@
 .workspace {
-  min-height: 100svh;
-  background: #f6f7f4;
-  color: #1f2420;
+  height: 100svh;
+  overflow: hidden;
+  background: #151918;
+  color: #e5e1cf;
   font-synthesis: none;
 }
 
 .fileInput {
   position: fixed;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.screenReaderOnly {
+  position: absolute;
   width: 1px;
   height: 1px;
   overflow: hidden;
@@ -23,7 +34,7 @@
   gap: 22px;
   padding: 32px;
   border: 1px dashed transparent;
-  background: linear-gradient(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.14)), #f6f7f4;
+  background: #151918;
   transition:
     background-color 160ms ease,
     border-color 160ms ease;
@@ -38,7 +49,7 @@
 
 .dragging {
   border-color: #6f897b;
-  background: linear-gradient(rgba(255, 255, 255, 0.36), rgba(255, 255, 255, 0.12)), #e9efe8;
+  background: #20241b;
 }
 
 .dropGlyph {
@@ -48,7 +59,7 @@
   place-items: center;
   border: 1px solid #cbd6c8;
   border-radius: 8px;
-  color: #42574d;
+  color: #d6d2bd;
 }
 
 .dropGlyph svg {
@@ -59,34 +70,35 @@
 .openButton,
 .controlButton,
 .iconButton {
-  border: 1px solid #cbd6c8;
+  border: 1px solid transparent;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.46);
-  color: #202722;
+  background: transparent;
+  color: #d8d4c5;
   box-shadow: none;
 }
 
 .openButton:hover,
 .controlButton:hover,
 .iconButton:hover {
-  background: rgba(255, 255, 255, 0.78);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .readerMode {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  min-height: 100svh;
+  height: 100svh;
+  min-height: 0;
 }
 
 .readerControls {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) auto minmax(160px, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 16px;
-  min-height: 56px;
-  padding: 10px 14px;
-  border-bottom: 1px solid #d4ddd3;
-  background: rgba(242, 245, 241, 0.94);
+  gap: 18px;
+  min-height: 72px;
+  padding: 12px 20px;
+  border-bottom: 1px solid #303530;
+  background: #292c02;
 }
 
 .fileState {
@@ -107,7 +119,7 @@
 
 .fileMeta {
   flex: 0 0 auto;
-  color: #5f6a62;
+  color: #aaa690;
   font-size: 0.82rem;
 }
 
@@ -116,18 +128,72 @@
   flex: 0 0 auto;
   align-items: center;
   justify-content: flex-end;
+  gap: 0;
+}
+
+.topActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.openPrimaryButton,
+.openMenuButton {
+  height: 40px;
+  border: 0;
+  background: #058342;
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.openPrimaryButton {
   gap: 8px;
+  padding: 0 12px;
+  border-radius: 6px 0 0 6px;
+}
+
+.openMenuButton {
+  width: 38px;
+  border-left: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0 6px 6px 0;
+}
+
+.openPrimaryButton:hover,
+.openMenuButton:hover {
+  background: #07964d;
+}
+
+.readerBody {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  min-height: 0;
+}
+
+.sideRail {
+  display: grid;
+  align-content: start;
+  justify-items: center;
+  min-height: 0;
+  padding: 28px 16px;
+  border-right: 1px solid #303633;
+  background: #151918;
 }
 
 .pageControls {
   display: grid;
-  grid-template-columns: 36px minmax(92px, auto) 36px 36px minmax(42px, auto) 36px auto;
+  grid-template-columns: 1fr;
   align-items: center;
-  gap: 8px;
+  justify-items: center;
+  gap: 10px;
+  width: 100%;
 }
 
 .controlButton {
   height: 36px;
+  width: 100%;
+  padding: 0;
+  font-size: 0.74rem;
 }
 
 .iconButton {
@@ -137,11 +203,36 @@
 
 .pageCount,
 .zoomState {
-  color: #2b332d;
+  color: #d7d3c2;
   font-size: 0.86rem;
   font-variant-numeric: tabular-nums;
   text-align: center;
   white-space: nowrap;
+}
+
+.pageCount {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 0;
+  border-block: 1px solid #343a36;
+}
+
+.pageCount strong {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid #5d5a66;
+  border-radius: 6px;
+  background: #27252e;
+  color: #ffffff;
+  font-size: 0.92rem;
+}
+
+.pageCount span {
+  color: #d1cdbb;
 }
 
 .readingSurface {
@@ -151,39 +242,65 @@
   gap: 10px;
   overflow: auto;
   width: 100%;
-  height: calc(100svh - 57px);
-  padding: 32px;
-  background: #e8ede7;
+  height: 100%;
+  min-height: 0;
+  padding: 18px 28px 32px;
+  background: #151918;
+}
+
+.pdfPages {
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  width: 100%;
+}
+
+.pageSheet {
+  overflow: hidden;
+  max-width: 100%;
+  background: #d9dab6;
 }
 
 .pdfPage {
   display: block;
   max-width: 100%;
-  background: #101411;
-  box-shadow: 0 8px 24px rgba(32, 39, 34, 0.12);
+  background: #d9dab6;
+  box-shadow: none;
+  mix-blend-mode: multiply;
 }
 
 .status {
-  color: #5f6a62;
+  color: #aaa690;
   font-size: 0.82rem;
 }
 
 @media (max-width: 620px) {
   .readerControls {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr auto;
     align-items: stretch;
+    min-height: auto;
+    padding: 10px;
+  }
+
+  .fileState {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .topActions {
+    justify-content: end;
+  }
+
+  .readerBody {
+    grid-template-columns: 58px minmax(0, 1fr);
+  }
+
+  .sideRail {
+    padding: 18px 10px;
   }
 
   .pageControls {
-    grid-template-columns: 36px minmax(92px, 1fr) 36px 36px minmax(42px, auto) 36px;
-  }
-
-  .pageControls .controlButton {
-    grid-column: 1 / -1;
-  }
-
-  .actions {
-    justify-content: space-between;
+    gap: 8px;
   }
 
   .fileName {
@@ -191,11 +308,10 @@
   }
 
   .controlButton {
-    flex: 1 1 auto;
+    font-size: 0;
   }
 
   .readingSurface {
-    height: calc(100svh - 153px);
-    padding: 18px;
+    padding: 18px 12px 24px;
   }
 }
